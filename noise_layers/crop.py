@@ -30,7 +30,7 @@ def get_random_rectangle_inside(image, height_ratio_range, width_ratio_range):
     #np.rint是四舍五入取整，height_ratio_range[0]是为长变化的下限，[1]是为上限，
     # 所以是得到了一个缩小了的图像的长宽，在原图像的范围内
     remaining_height = int(np.rint(random_float(height_ratio_range[0], height_ratio_range[1]) * image_height))
-    remaining_width = int(np.rint(random_float(width_ratio_range[0], width_ratio_range[0]) * image_width))
+    remaining_width = int(np.rint(random_float(width_ratio_range[0], width_ratio_range[1]) * image_width))
 
     if remaining_height == image_height:
         height_start = 0
