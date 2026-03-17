@@ -74,23 +74,16 @@ class SwinBlock(nn.Module):
             input_resolution = _INPUT_RES,
             num_heads        = _SWIN_HEADS,
             window_size      = window_size,
-            shift_size       = 0,
+            shift_size       = window_size // 2,
         )
         self.proj_out    = nn.Conv2d(_SWIN_DIM, channels, kernel_size=1)
         self.dynamic_mlp = DynamicMLP(channels)
 
     def forward(self, x):
         feat = self.proj_in(x)
-        
-        # Permute from (B, C, H, W) to (B, H, W, C) for timm SwinBlock
         feat = feat.permute(0, 2, 3, 1)
-        
-        # Apply Swin Attention
         feat = self.swin(feat)
-        
-        # Permute back from (B, H, W, C) to (B, C, H, W)
         feat = feat.permute(0, 3, 1, 2)
-        
         feat = self.proj_out(feat)
         return x + feat * self.dynamic_mlp(x)
 

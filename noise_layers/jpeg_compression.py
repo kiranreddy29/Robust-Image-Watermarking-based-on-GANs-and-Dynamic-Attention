@@ -44,10 +44,8 @@ class JpegCompression(nn.Module):
     def __init__(self, device, yuv_keep_weights=(25, 9, 9)):
         super(JpegCompression, self).__init__()
         self.device = device
-        
         self.dct_conv_weights = torch.tensor(gen_filters(8, 8, dct_coeff), dtype=torch.float32).to(self.device).unsqueeze(1)
         self.idct_conv_weights = torch.tensor(gen_filters(8, 8, idct_coeff), dtype=torch.float32).to(self.device).unsqueeze(1)
-
         self.yuv_keep_weighs = yuv_keep_weights
         self.jpeg_mask = None
         self.create_mask((1000, 1000))
@@ -60,7 +58,7 @@ class JpegCompression(nn.Module):
                 self.jpeg_mask[channel] = mask
 
     def get_mask(self, image_shape):
-        if self.jpeg_mask.shape < image_shape:
+        if self.jpeg_mask is None or self.jpeg_mask.shape[1] < image_shape[1] or self.jpeg_mask.shape[2] < image_shape[2]:
             self.create_mask(image_shape)
         return self.jpeg_mask[:, :image_shape[1], :image_shape[2]].clone()
 
@@ -79,9 +77,7 @@ class JpegCompression(nn.Module):
             image_conv = image_conv.permute(0, 2, 3, 1)
             image_conv = image_conv.view(image_conv.shape[0], image_conv.shape[1], image_conv.shape[2], 8, 8)
             image_conv = image_conv.permute(0, 1, 3, 2, 4)
-            image_conv = image_conv.contiguous().view(image_conv.shape[0],
-                                                      image_conv.shape[1]*image_conv.shape[2],
-                                                      image_conv.shape[3]*image_conv.shape[4])
+            image_conv = image_conv.contiguous().view(image_conv.shape[0], image_conv.shape[1]*image_conv.shape[2], image_conv.shape[3]*image_conv.shape[4])
             image_conv = image_conv.unsqueeze(1)
             image_conv_channels.append(image_conv)
 
@@ -91,8 +87,9 @@ class JpegCompression(nn.Module):
         noised_image = noised_and_cover[0]
         pad_height = (8 - noised_image.shape[2] % 8) % 8
         pad_width = (8 - noised_image.shape[3] % 8) % 8
-
         noised_image = nn.ZeroPad2d((0, pad_width, 0, pad_height))(noised_image)
+        
+        noised_image = (noised_image + 1.0) / 2.0 * 255.0
 
         image_yuv = rgb2yuv(noised_image)
         image_dct = self.apply_conv(image_yuv, 'dct')
@@ -102,5 +99,6 @@ class JpegCompression(nn.Module):
         image_ret_padded = yuv2rgb(image_idct)
 
         ret_image = image_ret_padded[:, :, :image_ret_padded.shape[2]-pad_height, :image_ret_padded.shape[3]-pad_width]
+        ret_image = (ret_image / 255.0) * 2.0 - 1.0
         
         return [ret_image, noised_and_cover[1]]

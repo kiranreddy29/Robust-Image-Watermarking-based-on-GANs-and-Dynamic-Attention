@@ -12,8 +12,6 @@ class Gaussian_Noise(nn.Module):
         B, C, H, W = encode_image.shape
         
         noise = torch.randn((B, 1, H, W), device=encode_image.device) * self.sigma + self.mean
-        noise = torch.clamp(noise, 0.0, 1.0)
-        
-        noised_image = encode_image + noise
+        noised_image = torch.clamp(encode_image + noise, -1.0, 1.0)
         
         return [noised_image, cover_image]

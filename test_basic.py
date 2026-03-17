@@ -4,7 +4,7 @@ from utils.dataset import get_loader
 from noise_layers.Gaussian_noise import Gaussian_Noise
 from utils.metrics import psnr
 
-device = "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu"
+device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 print(f"Testing on device: {device}")
 
 G = WatermarkGenerator().to(device)

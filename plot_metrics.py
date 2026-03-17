@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 
 def main():
     checkpoint_dir = "checkpoints"
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    
     epochs = []
     psnr_c = []
     psnr_s = []
@@ -17,6 +19,10 @@ def main():
                 epochs.append(checkpoint["epoch"])
                 psnr_c.append(checkpoint["avg_psnr_c"])
                 psnr_s.append(checkpoint["avg_psnr_s"])
+
+    if not epochs:
+        print("No checkpoints found to plot.")
+        return
 
     sorted_data = sorted(zip(epochs, psnr_c, psnr_s))
     epochs, psnr_c, psnr_s = zip(*sorted_data)

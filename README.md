@@ -199,3 +199,11 @@ Group 16 — B.Tech CSE
 
 Yan J, Tian L, Xu X, Li C — *Robust Image Watermarking Algorithm Based on Generative Adversarial Networks and Dynamic Attention* — Neurocomputing, 2026.
 DOI: https://doi.org/10.1016/j.neucom.2026.132829
+
+## Hardware & Reproducibility
+- **Recommended GPU:** 16GB+ VRAM (e.g., Tesla P100, RTX 4080) for batch size 16. Use batch size 4 for 8GB VRAM.
+- **Training Time:** ~12 hours on Kaggle P100 GPU for 1600 epochs.
+- **Reproducibility:** PyTorch random seeds were fixed during testing to ensure consistent attack evaluation.
+
+## License
+This project is licensed under the MIT License.

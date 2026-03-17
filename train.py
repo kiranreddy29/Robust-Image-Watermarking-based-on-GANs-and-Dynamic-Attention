@@ -3,9 +3,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset
-from torchvision import transforms
-from PIL import Image
+from utils.metrics import psnr
 from tqdm import tqdm
 
 from models.generator import WatermarkGenerator
@@ -13,6 +11,7 @@ from models.discriminator import Discriminator
 from noise_layers.noiser import Noiser
 from noise_layers.Gaussian_noise import Gaussian_Noise
 from noise_layers.identity import Identity
+from utils.dataset import get_loader
 
 device = (
     "cuda" if torch.cuda.is_available() else
@@ -22,53 +21,10 @@ device = (
 print(f"Using device: {device}")
 
 
-class FlatImageDataset(Dataset):
-    EXTS = ('.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.webp')
-
-    def __init__(self, folder, transform=None):
-        self.paths = []
-        for root, dirs, files in os.walk(folder):
-            for f in files:
-                if f.lower().endswith(self.EXTS):
-                    self.paths.append(os.path.join(root, f))
-        self.paths.sort()
-        if len(self.paths) == 0:
-            raise FileNotFoundError(f"No images found in: {folder} or its subdirectories")
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.paths)
-
-    def __getitem__(self, idx):
-        img = Image.open(self.paths[idx]).convert('RGB')
-        if self.transform:
-            img = self.transform(img)
-        return img
-
-
-def get_loader(path, batch_size=4, shuffle=True):
-    tf = transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-        transforms.Normalize([0.5] * 3, [0.5] * 3),
-    ])
-    dataset = FlatImageDataset(path, transform=tf)
-    return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle,
-                      num_workers=2, pin_memory=(device == "cuda"), drop_last=True)
-
-
-def psnr(img1, img2):
-    mse = torch.mean((img1.detach() - img2.detach()) ** 2).item()
-    if mse < 1e-10:
-        return 100.0
-    return 20.0 * math.log10(2.0 / math.sqrt(mse))
-
-
 def wavelet_ll_loss(xc, xh):
     ll_xc = F.avg_pool2d(xc, kernel_size=2, stride=2)
     ll_xh = F.avg_pool2d(xh, kernel_size=2, stride=2)
     return F.mse_loss(ll_xc, ll_xh)
-
 
 def discriminator_loss(d_real, d_fake):
     return -(
@@ -76,10 +32,8 @@ def discriminator_loss(d_real, d_fake):
         torch.mean(torch.log(1.0 - d_fake + 1e-8))
     )
 
-
 def generator_adv_loss(d_fake):
     return -torch.mean(torch.log(d_fake + 1e-8))
-
 
 EPOCHS         = 1600
 BATCH_SIZE     = 4
@@ -95,12 +49,16 @@ GAUSSIAN_SIGMA = 10.0 / 127.5
 CHECKPOINT_DIR = "checkpoints"
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
-
 def main():
     G = WatermarkGenerator().to(device)
     D = Discriminator().to(device)
 
-    noise_list    = [Gaussian_Noise(mean=0.0, sigma=GAUSSIAN_SIGMA), 'JpegPlaceholder', Identity()]
+    noise_list    = [
+        Gaussian_Noise(mean=0.0, sigma=GAUSSIAN_SIGMA), 
+        'JpegPlaceholder', 
+        'QuantizationPlaceholder', 
+        Identity()
+    ]
     attack_module = Noiser(noise_list, device=device).to(device)
 
     mse_loss = nn.MSELoss()
@@ -142,15 +100,21 @@ def main():
 
             watermarked  = G(cover, wm)
             attacked     = attack_module([watermarked.clone(), cover.clone()])[0]
+            attacked     = torch.clamp(attacked, -1.0, 1.0)
+            
             extracted_wm = G.extract(attacked, watermarked)
 
-            opt_d.zero_grad()
-            d_real = D(cover)
-            d_fake = D(attacked.detach())
-            d_loss = discriminator_loss(d_real, d_fake)
-            d_loss.backward()
-            torch.nn.utils.clip_grad_norm_(D.parameters(), max_norm=1.0)
-            opt_d.step()
+            if epoch >= PHASE2_EPOCH:
+                opt_d.zero_grad()
+                d_real = D(cover)
+                d_fake = D(attacked.detach())
+                d_loss = discriminator_loss(d_real, d_fake)
+                d_loss.backward()
+                torch.nn.utils.clip_grad_norm_(D.parameters(), max_norm=1.0)
+                opt_d.step()
+                d_loss_val = d_loss.item()
+            else:
+                d_loss_val = 0.0
 
             opt_g.zero_grad()
 
@@ -173,14 +137,14 @@ def main():
 
             batch_psnr_c  = psnr(watermarked, cover)
             batch_psnr_s  = psnr(extracted_wm, wm)
-            epoch_d_loss += d_loss.item()
+            epoch_d_loss += d_loss_val
             epoch_g_loss += g_loss.item()
             epoch_psnr_c += batch_psnr_c
             epoch_psnr_s += batch_psnr_s
             n_batches    += 1
 
             pbar.set_postfix({
-                "D": f"{d_loss.item():.3f}",
+                "D": f"{d_loss_val:.3f}",
                 "G": f"{g_loss.item():.3f}",
                 "PSNR-C": f"{batch_psnr_c:.1f}",
                 "PSNR-S": f"{batch_psnr_s:.1f}",

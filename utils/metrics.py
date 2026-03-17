@@ -2,7 +2,7 @@ import torch
 import math
 
 def psnr(img1, img2):
-    mse = torch.mean((img1 - img2) ** 2)
-    if mse == 0:
+    mse = torch.mean((img1 - img2) ** 2).item()
+    if mse < 1e-10:
         return 100.0
-    return 20 * math.log10(2.0 / math.sqrt(mse.item()))
+    return 20.0 * math.log10(2.0 / math.sqrt(mse))
