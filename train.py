@@ -212,7 +212,12 @@ wm_loader    = get_loader("data/DIV2K/watermark", batch_size=BATCH_SIZE, shuffle
 print("Starting training …")
 
 for epoch in range(EPOCHS):
-
+    if epoch < 300:
+        g_loss = L_enhance + LAMBDA_F * L_f + L_l 
+    elif epoch < 1000:
+        g_loss = L_enhance + LAMBDA_ADV * L_adv + LAMBDA_F * L_f + L_l
+    else:
+        g_loss = L_enhance + LAMBDA_ADV * L_adv + LAMBDA_F * L_f + L_l
     # ── Phase-3 learning rate switch ────────────────────────────────────────
     if epoch == PHASE3_EPOCH:
         set_lr(opt_g, LR_LATE)

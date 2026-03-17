@@ -1,7 +1,7 @@
 import torch
 from models.generator import WatermarkGenerator, DifferentialFeatureExtractor
 from utils.dataset import get_loader
-from utils.attacks import gaussian_attack
+from noise_layers.Gaussian_noise import Gaussian_Noise
 from utils.metrics import psnr
 
 # -------------------------
@@ -33,13 +33,13 @@ DiffExtractor.eval()
 cover_loader = get_loader("data/DIV2K/cover", batch_size=1)
 wm_loader = get_loader("data/DIV2K/watermark", batch_size=1)
 
-# The dataloader yields a list: [image_tensor, label_tensor]
-cover_batch = next(iter(cover_loader))
-wm_batch = next(iter(wm_loader))
+# Unpack the list into image and dummy label
+cover, _ = next(iter(cover_loader))
+wm, _ = next(iter(wm_loader))
 
-# Grab the 0th index (the actual images) and send them to the device
-cover = cover_batch[0].to(device)
-wm = wm_batch[0].to(device)
+# Now push just the image tensors to the device
+cover = cover.to(device)
+wm = wm.to(device)
 
 # -------------------------
 # 3. Test Pipeline
@@ -50,9 +50,14 @@ with torch.no_grad():
     print("1. Embedding watermark...")
     watermarked = G(cover, wm)
     
-    # Step B: Apply Attack [cite: 651, 654]
+    # Step B: Apply Attack
     print("2. Applying distortion attack...")
-    attacked = gaussian_attack(watermarked, std=0.1)
+    # Initialize the attack with mean=0 and sigma=10 (as tested in the paper)
+    attack_layer = Gaussian_Noise(mean=0.0, sigma=10.0).to(device)
+    
+    # Pass the image as a list, and grab the 0th index from the output
+    attacked_input = [watermarked.clone(), cover.clone()]
+    attacked = attack_layer(attacked_input)[0]
     
     # Step C: Extract Differential Features
     print("3. Extracting differential features...")
