@@ -8,6 +8,11 @@ data/
 # Python Cache
 __pycache__/
 *.pyc
+.ipynb_checkpoints/
 
-# Model Weights
+# Checkpoints and Training States
+checkpoints/
+
+# Model Weights (Ignore all EXCEPT the final generator for testing)
 *.pth
+!generator_final.pth

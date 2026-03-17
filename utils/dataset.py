@@ -8,7 +8,6 @@ class FlatImageDataset(Dataset):
         self.transform = transform
         self.paths = []
         
-        # os.walk recursively goes through all sub-folders automatically
         for root, dirs, files in os.walk(folder):
             for file in files:
                 if file.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp')):
@@ -28,9 +27,7 @@ class FlatImageDataset(Dataset):
         if self.transform:
             img = self.transform(img)
             
-        # Return a dummy label '0' so your unpacking logic (cover, _) in test_basic.py
-        # and train.py doesn't break.
-        return img, 0
+        return img
 
 def get_loader(path, batch_size=1, shuffle=False):
     tf = transforms.Compose([
@@ -39,5 +36,4 @@ def get_loader(path, batch_size=1, shuffle=False):
         transforms.Normalize([0.5]*3, [0.5]*3)
     ])
     
-    # Set num_workers=0 for safer local testing on Mac
     return DataLoader(FlatImageDataset(path, transform=tf), batch_size=batch_size, shuffle=shuffle, num_workers=0)
