@@ -7,45 +7,67 @@ _SWIN_DIM   = 96
 _SWIN_HEADS = 3
 _INPUT_RES  = (224, 224)
 
+class TextureSaliency(nn.Module):
+    def __init__(self):
+        super().__init__()
+        kernel_x = torch.tensor([[-1., 0., 1.], [-2., 0., 2.], [-1., 0., 1.]]).view(1, 1, 3, 3).repeat(3, 1, 1, 1)
+        kernel_y = torch.tensor([[-1., -2., -1.], [0., 0., 0.], [1., 2., 1.]]).view(1, 1, 3, 3).repeat(3, 1, 1, 1)
+        self.register_buffer('weight_x', kernel_x)
+        self.register_buffer('weight_y', kernel_y)
+
+    def forward(self, x):
+        # Disable gradient tracking entirely for the physical edge detection
+        with torch.no_grad():
+            grad_x = F.conv2d(x, self.weight_x, padding=1, groups=3)
+            grad_y = F.conv2d(x, self.weight_y, padding=1, groups=3)
+            magnitude = torch.sqrt(grad_x.pow(2) + grad_y.pow(2) + 1e-6)
+            
+            mask = magnitude.mean(dim=1, keepdim=True)
+            min_val = mask.amin(dim=(2, 3), keepdim=True)
+            max_val = mask.amax(dim=(2, 3), keepdim=True)
+            
+            norm_mask = (mask - min_val) / (max_val - min_val + 1e-8)
+            return norm_mask * 0.5 + 0.5
 
 class InvertibleBlock(nn.Module):
     def __init__(self, in_channels=6):
         super().__init__()
         half = in_channels // 2
-        self.s1 = nn.Sequential(nn.Conv2d(half, 64, 3, padding=1), nn.ReLU(), nn.Conv2d(64, half, 3, padding=1), nn.Tanh())
-        self.t1 = nn.Sequential(nn.Conv2d(half, 64, 3, padding=1), nn.ReLU(), nn.Conv2d(64, half, 3, padding=1))
-        self.s2 = nn.Sequential(nn.Conv2d(half, 64, 3, padding=1), nn.ReLU(), nn.Conv2d(64, half, 3, padding=1), nn.Tanh())
-        self.t2 = nn.Sequential(nn.Conv2d(half, 64, 3, padding=1), nn.ReLU(), nn.Conv2d(64, half, 3, padding=1))
+        self.s1 = nn.Sequential(nn.Conv2d(half, 64, 3, padding=1), nn.ReLU(inplace=False), nn.Conv2d(64, half, 3, padding=1), nn.Tanh())
+        self.t1 = nn.Sequential(nn.Conv2d(half, 64, 3, padding=1), nn.ReLU(inplace=False), nn.Conv2d(64, half, 3, padding=1))
+        self.s2 = nn.Sequential(nn.Conv2d(half, 64, 3, padding=1), nn.ReLU(inplace=False), nn.Conv2d(64, half, 3, padding=1), nn.Tanh())
+        self.t2 = nn.Sequential(nn.Conv2d(half, 64, 3, padding=1), nn.ReLU(inplace=False), nn.Conv2d(64, half, 3, padding=1))
 
     def forward(self, x, reverse=False):
-        x1, x2 = torch.chunk(x, 2, dim=1)
+        x1 = x[:, :3, :, :].clone()
+        x2 = x[:, 3:, :, :].clone()
+        
         if not reverse:
             y2 = x2 * torch.exp(self.s1(x1)) + self.t1(x1)
-            y1 = x1
+            y1 = x1.clone()
             z1 = y1 * torch.exp(self.s2(y2)) + self.t2(y2)
-            z2 = y2
+            z2 = y2.clone()
             return torch.cat([z1, z2], dim=1)
         else:
-            z1, z2 = x1, x2
-            y2 = z2
+            z1 = x1.clone()
+            z2 = x2.clone()
+            y2 = z2.clone()
             y1 = (z1 - self.t2(y2)) * torch.exp(-self.s2(y2))
-            x1 = y1
-            x2 = (y2 - self.t1(x1)) * torch.exp(-self.s1(x1))
-            return torch.cat([x1, x2], dim=1)
-
+            x1_rev = y1.clone()
+            x2_rev = (y2 - self.t1(x1_rev)) * torch.exp(-self.s1(x1_rev))
+            return torch.cat([x1_rev, x2_rev], dim=1)
 
 class DenseBlock(nn.Module):
     def __init__(self, channels=3, growth_rate=16):
         super().__init__()
         self.conv1 = nn.Conv2d(channels, growth_rate, 3, padding=1)
         self.conv2 = nn.Conv2d(channels + growth_rate, channels, 3, padding=1)
-        self.relu  = nn.ReLU(inplace=True)
+        self.relu  = nn.ReLU(inplace=False)
 
     def forward(self, x):
         out1 = self.relu(self.conv1(x))
         out2 = self.conv2(torch.cat([x, out1], dim=1))
         return out2 + x
-
 
 class DynamicMLP(nn.Module):
     def __init__(self, channels):
@@ -53,7 +75,7 @@ class DynamicMLP(nn.Module):
         self.pool    = nn.AdaptiveAvgPool2d(1)
         self.flatten = nn.Flatten()
         self.fc1     = nn.Linear(channels, channels // 2)
-        self.relu    = nn.ReLU(inplace=True)
+        self.relu    = nn.ReLU(inplace=False)
         self.fc2     = nn.Linear(channels // 2, channels)
 
     def forward(self, x):
@@ -62,8 +84,7 @@ class DynamicMLP(nn.Module):
         w = self.flatten(w)
         w = self.relu(self.fc1(w))
         w = self.fc2(w)
-        return w.view(b, c, 1, 1)
-
+        return w.view(b, c, 1, 1).clone()
 
 class SwinBlock(nn.Module):
     def __init__(self, channels, window_size=4):
@@ -85,7 +106,7 @@ class SwinBlock(nn.Module):
         feat = self.swin(feat)
         feat = feat.permute(0, 3, 1, 2)
         feat = self.proj_out(feat)
-        return x + feat * self.dynamic_mlp(x)
+        return x + (feat * self.dynamic_mlp(x))
 
 class EnhancementModule(nn.Module):
     def __init__(self, channels=3, window_size=4):
@@ -99,7 +120,6 @@ class EnhancementModule(nn.Module):
         feat = self.swin_block(feat)
         feat = self.post_dense(feat)
         return feat + x
-
 
 class DifferentialFeatureExtractor(nn.Module):
     def __init__(self, channels=3, growth_rate=32):
@@ -119,17 +139,20 @@ class DifferentialFeatureExtractor(nn.Module):
         x4   = F.relu(self.conv4(torch.cat([diff, x1, x2, x3], dim=1)))
         return self.final(torch.cat([diff, x1, x2, x3, x4],    dim=1))
 
-
 class WatermarkGenerator(nn.Module):
     def __init__(self):
         super().__init__()
+        self.saliency     = TextureSaliency()
         self.isn          = InvertibleBlock(in_channels=6)
         self.enhance_pre  = EnhancementModule(channels=3, window_size=4)
         self.enhance_post = EnhancementModule(channels=3, window_size=8)
         self.diff_feat    = DifferentialFeatureExtractor(channels=3)
 
     def embed(self, cover, secret):
-        isn_out     = self.isn(torch.cat([cover, secret], dim=1), reverse=False)
+        # Detach prevents the Generator from trying to "cheat" the texture mask
+        mask = self.saliency(cover).detach()
+        modulated_secret = secret * mask
+        isn_out     = self.isn(torch.cat([cover, modulated_secret], dim=1), reverse=False)
         watermarked = isn_out[:, :3, :, :]
         return torch.clamp(watermarked, -1.0, 1.0)
 
@@ -138,7 +161,11 @@ class WatermarkGenerator(nn.Module):
         xd_enhanced = self.enhance_pre(attacked)
         isn_out     = self.isn(torch.cat([xd_enhanced, xc_feat], dim=1), reverse=True)
         raw_secret  = isn_out[:, 3:, :, :]
-        return torch.clamp(self.enhance_post(raw_secret), -1.0, 1.0)
+        
+        # Detach treats the attacked image's mask as a physical constraint
+        mask = self.saliency(watermarked).detach()
+        demodulated_secret = raw_secret / (mask + 1e-6)
+        return torch.clamp(self.enhance_post(demodulated_secret), -1.0, 1.0)
 
     def forward(self, cover, secret):
         return self.embed(cover, secret)
